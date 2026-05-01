@@ -77,7 +77,6 @@ public class ProductService {
     public ProductResponse updateProduct(Long id, ProductRequest request) {
         Product product = findActiveProduct(id);
 
-        // Only check SKU uniqueness if the SKU is actually changing
         if (!product.getSku().equals(request.getSku())
                 && productRepository.existsBySku(request.getSku())) {
             throw new InventoryException(
@@ -101,8 +100,6 @@ public class ProductService {
     public void deleteProduct(Long id) {
         Product product = findActiveProduct(id);
         product.setActive(false);
-        // We set active=false instead of calling repository.delete(product).
-        // This preserves the product record for historical order data.
         productRepository.save(product);
         log.info("Product soft-deleted: id={}", id);
     }
@@ -110,49 +107,30 @@ public class ProductService {
     @Transactional
     @PreAuthorize("hasRole('Admin')")
     public Map<String, Object> bulkImportProducts(MultipartFile file) {
-        /*
-         * MultipartFile is Spring's abstraction for an uploaded file.
-         * The client sends a multipart/form-data request containing the file.
-         * Spring parses the multipart request and gives us a clean
-         * MultipartFile object to work with.
-         */
         if (file.isEmpty()) {
             throw new InventoryException(
                     "Upload file is empty", HttpStatus.BAD_REQUEST);
         }
 
-        // Step 1: Save the uploaded file to disk for audit purposes.
-        // Even if the import fails, we have a record of what was uploaded.
         String savedFileName = saveFileToDisk(file);
         log.info("Bulk import file saved: {}", savedFileName);
 
-        // Step 2: Parse the file and import each product.
         int successCount = 0;
         int skipCount = 0;
         List<String> errors = new ArrayList<>();
 
         try (BufferedReader reader = new BufferedReader(
                 new InputStreamReader(file.getInputStream()))) {
-            /*
-             * try-with-resources ensures the BufferedReader is closed
-             * automatically after the block, even if an exception is thrown.
-             * This is critical for file handling — unclosed streams
-             * cause resource leaks that crash servers under load.
-             *
-             * The file format expected (one product per line):
-             * name|SKU|description|price|stockQty
-             * Example: Wireless Mouse|MOUSE-001|USB wireless mouse|29.99|150
-             */
 
             String line;
             int lineNumber = 0;
 
-            // Skip the header line if it exists
+
             String firstLine = reader.readLine();
             if (firstLine != null && firstLine.startsWith("name|")) {
-                // It's a header row, skip it
+
             } else if (firstLine != null) {
-                // First line is data, process it
+
                 lineNumber++;
                 processImportLine(firstLine, lineNumber, errors, successCount);
                 if (errors.isEmpty()) successCount++;
@@ -164,11 +142,7 @@ public class ProductService {
 
                 try {
                     String[] parts = line.split("\\|");
-                    /*
-                     * We use "|" as the delimiter instead of comma because
-                     * product descriptions might contain commas. Using "|"
-                     * avoids the need for CSV quoting rules.
-                     */
+
                     if (parts.length < 5) {
                         errors.add("Line " + lineNumber + ": expected 5 fields, got " + parts.length);
                         skipCount++;
@@ -180,8 +154,7 @@ public class ProductService {
                         log.debug("Skipping existing SKU on line {}: {}", lineNumber, sku);
                         skipCount++;
                         continue;
-                        // We skip (not error) because re-running the same
-                        // import file should be safe (idempotent).
+
                     }
 
                     Product product = Product.builder()
@@ -206,7 +179,7 @@ public class ProductService {
                     HttpStatus.INTERNAL_SERVER_ERROR);
         }
 
-        // Return a summary so the caller knows exactly what happened
+
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("imported", successCount);
         result.put("skipped", skipCount);
@@ -214,7 +187,6 @@ public class ProductService {
         result.put("savedFile", savedFileName);
         return result;
     }
-    // ── STOCK MANAGEMENT (called by Order Service) ────────────────────────────
 
     @Transactional
     public ProductResponse decrementStock(Long id, int quantity) {
@@ -232,7 +204,6 @@ public class ProductService {
         return toResponse(productRepository.save(product));
     }
 
-    // ── PRIVATE HELPERS ───────────────────────────────────────────────────────
 
     private Product findActiveProduct(Long id) {
         return productRepository.findById(id)
@@ -251,13 +222,10 @@ public class ProductService {
                 Files.createDirectories(uploadPath);
             }
 
-            // Create a unique filename to prevent overwrites:
-            // timestamp + original filename
+
             String fileName = System.currentTimeMillis() + "_"
                     + Objects.requireNonNull(file.getOriginalFilename())
                     .replaceAll("[^a-zA-Z0-9._-]", "_");
-            // We sanitize the filename to prevent path traversal attacks
-            // where a malicious client might send a filename like "../../etc/passwd"
 
             Path filePath = uploadPath.resolve(fileName);
             Files.copy(file.getInputStream(), filePath,
@@ -273,21 +241,9 @@ public class ProductService {
 
     private void processImportLine(String line, int lineNumber,
                                    List<String> errors, int successCount) {
-        // Helper for processing the first non-header line
-        // (reuses the same logic as the loop body)
     }
 
     private ProductResponse toResponse(Product product) {
-        /*
-         * This mapper converts a Product entity into a ProductResponse DTO.
-         * It is a private method because it is an implementation detail —
-         * callers just pass a Product and get a ProductResponse back,
-         * they don't need to know how the mapping happens.
-         *
-         * In a larger project we would use MapStruct to generate this
-         * automatically, but writing it by hand is good for learning
-         * because you see exactly what data flows out of the service.
-         */
         return ProductResponse.builder()
                 .id(product.getId())
                 .name(product.getName())
