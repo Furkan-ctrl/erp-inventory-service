@@ -13,7 +13,6 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
-import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -37,10 +36,11 @@ public class ProductService {
     @Value("${file.upload-dir}")
     private String uploadDir;
 
-    public ProductResponse createProduct(ProductRequest request){
-        if(productRepository.existsBySku(request.getSku())){
+    @Transactional
+    public ProductResponse createProduct(ProductRequest request) {
+        if (productRepository.existsBySku(request.getSku())) {
             throw new InventoryException("A product with SKU " + request.getSku()
-                    + "already exists", HttpStatus.CONFLICT);
+                    + " already exists", HttpStatus.CONFLICT);
         }
         Product product = Product.builder()
                 .name(request.getName())
@@ -51,18 +51,17 @@ public class ProductService {
                 .build();
 
         Product saved = productRepository.save(product);
-        log.info("Product created: id= {}, sku = {}", saved.getId(),saved.getSku());
+        log.info("Product created: id={}, sku={}", saved.getId(), saved.getSku());
         return toResponse(saved);
     }
 
-    public ProductResponse getProductById(Long id){
+    public ProductResponse getProductById(Long id) {
         return toResponse(findActiveProduct(id));
     }
 
-    public Page<ProductResponse> getAllProducts(int page, int size, String sortBy){
-        Pageable pageable = PageRequest.of(page,size, Sort.by(sortBy).ascending());
-
-         return productRepository.findByActiveTrue(pageable).map(this::toResponse);
+    public Page<ProductResponse> getAllProducts(int page, int size, String sortBy) {
+        Pageable pageable = PageRequest.of(page, size, Sort.by(sortBy).ascending());
+        return productRepository.findByActiveTrue(pageable).map(this::toResponse);
     }
 
     public Page<ProductResponse> searchProducts(String name, int page, int size) {
@@ -70,7 +69,6 @@ public class ProductService {
         return productRepository
                 .findByNameContainingIgnoreCaseAndActiveTrue(name, pageable)
                 .map(this::toResponse);
-
     }
 
     @Transactional
@@ -91,11 +89,11 @@ public class ProductService {
         product.setPrice(request.getPrice());
         product.setStockQty(request.getStockQty());
 
-        return toResponse(productRepository.save(product));
-
-
-
+        Product saved = productRepository.save(product);
+        log.info("Product updated: id={}", saved.getId());
+        return toResponse(saved);
     }
+
     @Transactional
     public void deleteProduct(Long id) {
         Product product = findActiveProduct(id);
@@ -105,7 +103,6 @@ public class ProductService {
     }
 
     @Transactional
-    @PreAuthorize("hasRole('Admin')")
     public Map<String, Object> bulkImportProducts(MultipartFile file) {
         if (file.isEmpty()) {
             throw new InventoryException(
@@ -115,9 +112,9 @@ public class ProductService {
         String savedFileName = saveFileToDisk(file);
         log.info("Bulk import file saved: {}", savedFileName);
 
-        int successCount = 0;
         int skipCount = 0;
         List<String> errors = new ArrayList<>();
+        List<Product> productsToSave = new ArrayList<>();
 
         try (BufferedReader reader = new BufferedReader(
                 new InputStreamReader(file.getInputStream()))) {
@@ -125,20 +122,12 @@ public class ProductService {
             String line;
             int lineNumber = 0;
 
-
-            String firstLine = reader.readLine();
-            if (firstLine != null && firstLine.startsWith("name|")) {
-
-            } else if (firstLine != null) {
-
-                lineNumber++;
-                processImportLine(firstLine, lineNumber, errors, successCount);
-                if (errors.isEmpty()) successCount++;
-            }
-
             while ((line = reader.readLine()) != null) {
                 lineNumber++;
-                if (line.trim().isEmpty()) continue; // skip blank lines
+
+                if (line.trim().isEmpty() || line.startsWith("name|")) {
+                    continue;
+                }
 
                 try {
                     String[] parts = line.split("\\|");
@@ -154,7 +143,6 @@ public class ProductService {
                         log.debug("Skipping existing SKU on line {}: {}", lineNumber, sku);
                         skipCount++;
                         continue;
-
                     }
 
                     Product product = Product.builder()
@@ -165,23 +153,26 @@ public class ProductService {
                             .stockQty(Integer.parseInt(parts[4].trim()))
                             .build();
 
-                    productRepository.save(product);
-                    successCount++;
+                    productsToSave.add(product);
 
                 } catch (NumberFormatException e) {
                     errors.add("Line " + lineNumber + ": invalid number format — " + e.getMessage());
                     skipCount++;
                 }
             }
+
+            if (!productsToSave.isEmpty()) {
+                productRepository.saveAll(productsToSave);
+            }
+
         } catch (IOException e) {
             throw new InventoryException(
                     "Failed to read import file: " + e.getMessage(),
                     HttpStatus.INTERNAL_SERVER_ERROR);
         }
 
-
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("imported", successCount);
+        result.put("imported", productsToSave.size());
         result.put("skipped", skipCount);
         result.put("errors", errors);
         result.put("savedFile", savedFileName);
@@ -204,7 +195,6 @@ public class ProductService {
         return toResponse(productRepository.save(product));
     }
 
-
     private Product findActiveProduct(Long id) {
         return productRepository.findById(id)
                 .filter(Product::isActive)
@@ -216,12 +206,10 @@ public class ProductService {
 
     private String saveFileToDisk(MultipartFile file) {
         try {
-            // Create the uploads directory if it doesn't exist
             Path uploadPath = Paths.get(uploadDir);
             if (!Files.exists(uploadPath)) {
                 Files.createDirectories(uploadPath);
             }
-
 
             String fileName = System.currentTimeMillis() + "_"
                     + Objects.requireNonNull(file.getOriginalFilename())
@@ -239,10 +227,6 @@ public class ProductService {
         }
     }
 
-    private void processImportLine(String line, int lineNumber,
-                                   List<String> errors, int successCount) {
-    }
-
     private ProductResponse toResponse(Product product) {
         return ProductResponse.builder()
                 .id(product.getId())
@@ -257,4 +241,3 @@ public class ProductService {
                 .build();
     }
 }
-

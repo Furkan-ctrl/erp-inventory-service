@@ -1,0 +1,3 @@
+Wireless Mouse|MS-001|Ergonomic bluetooth mouse|25.99|150
+Mechanical Keyboard|KB-002|RGB mechanical keyboard|89.50|45
+USB-C Hub|UH-003|7-in-1 port hub|34.00|200

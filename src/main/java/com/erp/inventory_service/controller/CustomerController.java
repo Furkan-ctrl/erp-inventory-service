@@ -19,7 +19,7 @@ public class CustomerController {
 
     private final CustomerService customerService;
 
-    @PostMapping
+    @PostMapping("/create")
     public ResponseEntity<CustomerResponse> create(
             @Valid @RequestBody CustomerRequest request,
             HttpServletRequest httpRequest) {
@@ -41,7 +41,7 @@ public class CustomerController {
         return ResponseEntity.ok(customerService.getCustomerByEmail(email));
     }
 
-    @GetMapping
+    @GetMapping("/getAll")
     public ResponseEntity<Page<CustomerResponse>> getAll(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size,
